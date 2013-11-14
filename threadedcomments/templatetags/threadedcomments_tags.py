@@ -7,10 +7,12 @@ from threadedcomments.util import annotate_tree_properties, fill_tree as real_fi
 register = template.Library()
 
 class BaseThreadedCommentNode(BaseCommentNode):
-    def __init__(self, parent=None, flat=False, root_only=False, **kwargs):
+    def __init__(self, parent=None, flat=False, root_only=False,
+            level_reverse=False, **kwargs):
         self.parent = parent
         self.flat = flat
         self.root_only = root_only
+        self.level_reverse = level_reverse
         super(BaseThreadedCommentNode, self).__init__(**kwargs)
 
     @classmethod
@@ -21,7 +23,7 @@ class BaseThreadedCommentNode(BaseCommentNode):
                 raise template.TemplateSyntaxError("Second argument in %r tag must be 'for'" % tokens[0])
 
         extra_kw = {}
-        if tokens[-1] in ('flat', 'root_only'):
+        if tokens[-1] in ('flat', 'root_only', 'level_reverse', ):
             extra_kw[str(tokens.pop())] = True
 
         if len(tokens) == 5:
@@ -54,7 +56,26 @@ class BaseThreadedCommentNode(BaseCommentNode):
             qs = qs.order_by('-submit_date')
         elif self.root_only:
             qs = qs.exclude(parent__isnull=False).order_by('-submit_date')
+        elif self.level_reverse:
+            qs = self.sort_comments(qs)
         return qs
+
+    def sort_comments(self, tree):
+        final_tree = []
+        root_comments = [c for c in tree if c.tree_path.count('/') == 0]
+        root_comments.sort(key=lambda comment: comment.submit_date, reverse=True)
+        for comment in root_comments:
+            final_tree.append(comment)
+            self.append_and_sort_children(final_tree, tree, comment)
+        return final_tree
+
+
+    def append_and_sort_children(self, final_tree, tree, parent):
+        children = [c for c in tree if c.parent_id == parent.id]
+        children.sort(key=lambda comment: comment.submit_date, reverse=True)
+        for comment in children:
+            final_tree.append(comment)
+            self.append_and_sort_children(final_tree, tree, comment)
 
 
 class CommentListNode(BaseThreadedCommentNode):
@@ -330,7 +351,7 @@ def get_comment_form(parser, token):
 @register.tag
 def render_comment_form(parser, token):
     """
-    Render the comment form (as returned by ``{% render_comment_form %}``) 
+    Render the comment form (as returned by ``{% render_comment_form %}``)
     through the ``comments/form.html`` template.
 
     Syntax::
